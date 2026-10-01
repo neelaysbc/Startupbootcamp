@@ -1,0 +1,298 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SBC Leaf Swipe Stinger</title>
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// Startupbootcamp leaf swipe stinger – left-to-right, full height.
+// window.draw(t) renders the frame at time t (seconds) on a transparent canvas.
+// window.renderFrame(t, fps, samples) returns a motion-blurred PNG data URL.
+const W = 1920, H = 1080;
+const TIMELINE_END = 1.6;          // internal animation timeline
+const T0 = 0.12;                    // playback starts here (first visible motion on frame 1)
+const DURATION = 1.40;              // delivered clip length: T0 .. T0 + DURATION
+
+const C = {
+  green: '#008C8C',      // SBC Green
+  cybrus: '#30454A',     // Cybrus
+  white: '#FFFFFF',
+  morning: '#92D2D7',    // Morning Glory
+  leaves: ['#3F765D', '#4F8A6E', '#619A81', '#70A990', '#84BA9F', '#9DCFB3'],
+  veinDark: '#2C5E48',
+};
+
+// Official SBC arrow geometry (674 x 349 units). Upright only, never altered.
+const ARROW_OUTER = [[0,349],[337,0],[674,349],[591,349],[337,84],[83,349]];
+const ARROW_INNER = [[163,349],[337,168],[511,349],[430,349],[337,252],[245,349]];
+
+// ---------------------------------------------------------------- timing
+// Each band is the interval [L(t), R(t)] travelling left -> right.
+// Leading edges enter in order Morning Glory, Cybrus, Green (overlapping action);
+// trailing edges leave in reverse, so the green panel is the hero layer.
+const T_EDGE = 0.70;                 // seconds for one edge to cross
+const X0 = -320, X1 = W + 320;       // edge travel (leaves fully off-frame at both ends)
+const BANDS = [
+  // off: fixed spatial lead (px) of the accent bands; small time offsets add stretch at speed
+  { color: C.morning, rIn: 0.000, lOut: 0.904, off: 130 },
+  { color: C.cybrus,  rIn: 0.012, lOut: 0.892, off: 65 },
+  { color: C.green,   rIn: 0.024, lOut: 0.880, off: 0, hero: true },
+];
+
+function clamp01(x) { return Math.min(1, Math.max(0, x)); }
+// cubic-bezier(0.6, 0, 0.2, 1) – quick start (responsive on cue), long soft landing
+function bezier(p1x, p1y, p2x, p2y) {
+  const cx = 3 * p1x, bx = 3 * (p2x - p1x) - cx, ax = 1 - cx - bx;
+  const cy = 3 * p1y, by = 3 * (p2y - p1y) - cy, ay = 1 - cy - by;
+  const sx = u => ((ax * u + bx) * u + cx) * u;
+  const sy = u => ((ay * u + by) * u + cy) * u;
+  const dsx = u => (3 * ax * u + 2 * bx) * u + cx;
+  return x => {
+    let u = x;
+    for (let i = 0; i < 8; i++) { const d = sx(u) - x; const dd = dsx(u); if (Math.abs(dd) < 1e-6) break; u -= d / dd; }
+    u = clamp01(u);
+    return sy(u);
+  };
+}
+const EASE = bezier(0.6, 0, 0.2, 1);
+const edgeX = (t, start) => X0 + (X1 - X0) * EASE(clamp01((t - start) / T_EDGE));
+
+// ---------------------------------------------------------------- random
+let seed = 20261001;
+function rnd() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+const lerp = (a, b, u) => a + (b - a) * u;
+
+// ---------------------------------------------------------------- leaf sprites
+// Pre-render leaf variants (supersampled) so every frame draws identical leaves.
+const SPRITE_LEN = 260, SPRITE_W = 120;
+function makeLeafSprite(fill, veinColor) {
+  const cv = document.createElement('canvas');
+  cv.width = SPRITE_LEN; cv.height = SPRITE_W;
+  const g = cv.getContext('2d');
+  const cy = SPRITE_W / 2, len = SPRITE_LEN - 20, wid = SPRITE_W * 0.40;
+  g.translate(10, cy);
+  // blade: base at (0,0), tip at (len,0)
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.bezierCurveTo(len * 0.25, -wid * 1.05, len * 0.70, -wid * 0.95, len, 0);
+  g.bezierCurveTo(len * 0.70, wid * 0.95, len * 0.25, wid * 1.05, 0, 0);
+  g.closePath();
+  g.fillStyle = fill; g.fill();
+  // subtle tonal split along the midrib (leaf fold), like the logo leaves
+  g.save(); g.clip();
+  g.fillStyle = 'rgba(0,0,0,0.07)';
+  g.fillRect(0, 0, len, wid * 1.2);
+  g.restore();
+  // midrib + veins
+  g.strokeStyle = veinColor; g.lineCap = 'round';
+  g.lineWidth = 3.2;
+  g.beginPath(); g.moveTo(-6, 0); g.lineTo(len * 0.93, 0); g.stroke();
+  g.lineWidth = 2.2;
+  for (let i = 1; i <= 6; i++) {
+    const x = len * (0.10 + i * 0.12);
+    const reach = wid * 0.78 * Math.sin(Math.PI * (x / len)) ;
+    for (const s of [-1, 1]) {
+      g.beginPath(); g.moveTo(x - len * 0.02, 0);
+      g.quadraticCurveTo(x + len * 0.05, s * reach * 0.55, x + len * 0.10, s * reach);
+      g.stroke();
+    }
+  }
+  return cv;
+}
+const SPRITES = [];
+C.leaves.forEach((col, i) => {
+  SPRITES.push(makeLeafSprite(col, i < 3 ? 'rgba(255,255,255,0.80)' : C.veinDark));
+  SPRITES.push(makeLeafSprite(col, i < 2 ? C.veinDark : 'rgba(255,255,255,0.85)'));
+});
+
+// ---------------------------------------------------------------- leaf fields
+// A full-height drift of leaves rides on the green panel's leading and
+// trailing edges. Each leaf follows its edge with a small lag that varies
+// smoothly with height, so the front reads as an organic wave, not a line.
+function makeEdgeLeaves(count, dxMin, dxMax) {
+  const arr = [];
+  for (let i = 0; i < count; i++) {
+    const y = lerp(-80, H + 80, (i + rnd()) / count);
+    const depth = rnd();                       // 0 back .. 1 front
+    arr.push({
+      y,
+      dx: lerp(dxMin, dxMax, rnd()),
+      len: lerp(130, 235, rnd()) * lerp(0.85, 1.1, depth),
+      rot: (rnd() * 2 - 1) * 1.05,             // radians around "pointing right"
+      flutterA: lerp(0.06, 0.16, rnd()),
+      flutterF: lerp(5, 9, rnd()),
+      phase: rnd() * Math.PI * 2,
+      lag: 0.035 * (0.5 + 0.5 * Math.sin(y / 170 + 1.3)) + 0.012 * rnd(),
+      sprite: SPRITES[(rnd() * SPRITES.length) | 0],
+      depth,
+      flip: rnd() < 0.5,
+    });
+  }
+  arr.sort((a, b) => a.depth - b.depth);
+  return arr;
+}
+const LEAD = makeEdgeLeaves(150, -150, 170);
+const TRAIL = makeEdgeLeaves(150, -170, 150);
+
+// A handful of leaves peel off the trailing edge and drift, fading out well
+// before the end so the last frame is fully clear.
+const LOOSE = [];
+for (let i = 0; i < 16; i++) {
+  LOOSE.push({
+    y: lerp(40, H - 40, rnd()), dx: lerp(-60, 40, rnd()),
+    len: lerp(60, 110, rnd()), rot: (rnd() * 2 - 1) * 1.2,
+    spin: (rnd() * 2 - 1) * 2.2, vy: lerp(-120, 60, rnd()),
+    release: lerp(1.00, 1.16, rnd()),
+    sprite: SPRITES[(rnd() * SPRITES.length) | 0], flip: rnd() < 0.5,
+  });
+}
+
+// ---------------------------------------------------------------- drawing
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+function drawLeaf(g, sp, x, y, len, rot, flip, alpha = 1) {
+  const s = len / (SPRITE_LEN - 20);
+  g.save();
+  g.translate(x, y);
+  g.rotate(rot);
+  g.scale(s, flip ? -s : s);
+  g.globalAlpha = alpha;
+  g.drawImage(sp, -10 - (SPRITE_LEN - 20) / 2, -SPRITE_W / 2);
+  g.restore();
+}
+
+function arrowPath(g, cx, cy, width) {
+  const s = width / 674;
+  g.beginPath();
+  for (const poly of [ARROW_OUTER, ARROW_INNER]) {
+    poly.forEach(([x, y], i) => {
+      const px = cx + (x - 337) * s, py = cy + (y - 174.5) * s;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    });
+    g.closePath();
+  }
+}
+
+function drawPanelContent(g, t, L, R) {
+  // clip everything to the green panel
+  g.save();
+  g.beginPath(); g.rect(L, 0, R - L, H); g.clip();
+  // steady upward drift of small official arrows (white, low opacity)
+  const tile = 150, aw = 64, drift = 70 * t;
+  g.fillStyle = 'rgba(255,255,255,0.07)';
+  for (let row = -1; row < H / tile + 2; row++) {
+    for (let col = 0; col < W / tile + 1; col++) {
+      const x = col * tile + (row % 2 ? tile / 2 : 0) + 40;
+      const y = row * tile - (drift % (tile * 2)) + tile;
+      arrowPath(g, x, y, aw); g.fill();
+    }
+  }
+  // hero mark: official white arrow riding on the panel with slight parallax
+  const rG = edgeX(t, BANDS[2].rIn), lG = edgeX(t, BANDS[2].lOut);
+  const ride = (rG - X1) * 0.55 + (lG - X0) * 0.55;  // 0 while covered
+  const cx = W / 2 + ride;
+  const cy = H / 2 + 26 - 52 * clamp01((t - 0.35) / 0.9);
+  g.fillStyle = C.white;
+  arrowPath(g, cx, cy, 340); g.fill();
+  g.restore();
+}
+
+function edgeLeaves(g, t, leaves, start, side) {
+  for (const lf of leaves) {
+    const ex = edgeX(t - lf.lag, start);
+    const x = ex + lf.dx;
+    if (x < -300 || x > W + 300) continue;
+    // leaves on the move flutter more; settle as the edge eases out
+    const speed = Math.abs(edgeX(t - lf.lag + 0.01, start) - ex) / 0.01;
+    const flutter = lf.flutterA * Math.sin(t * lf.flutterF + lf.phase) * (0.4 + Math.min(speed / 3000, 1));
+    const lean = side === 'lead' ? -0.12 * Math.min(speed / 4000, 1) : 0.10 * Math.min(speed / 4000, 1);
+    drawLeaf(g, lf.sprite, x, lf.y, lf.len, lf.rot + flutter + lean, lf.flip);
+  }
+}
+
+window.draw = function (t) {
+  const g = ctx;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  // 1) accent bands (Morning Glory, Cybrus) under the hero panel
+  for (const b of BANDS) {
+    const R = edgeX(t, b.rIn) + b.off, L = edgeX(t, b.lOut) - b.off;
+    if (R <= L) continue;
+    if (!b.hero) {
+      g.fillStyle = b.color;
+      g.fillRect(Math.max(L, -2), 0, Math.min(R, W + 2) - Math.max(L, -2), H);
+    }
+  }
+  // 2) hero green panel + content
+  const G = BANDS[2];
+  const R = edgeX(t, G.rIn), L = edgeX(t, G.lOut);
+  if (R > L) {
+    // soft shadow cast onto the accent bands for depth
+    g.save();
+    g.shadowColor = 'rgba(20,40,44,0.35)'; g.shadowBlur = 40;
+    g.fillStyle = C.green;
+    g.fillRect(L, -50, R - L, H + 100);
+    g.restore();
+    drawPanelContent(g, t, L, R);
+  }
+  // 3) leaves on both edges (with a soft shadow so they read on any background)
+  g.save();
+  g.shadowColor = 'rgba(16,45,40,0.30)'; g.shadowBlur = 14; g.shadowOffsetY = 5;
+  edgeLeaves(g, t, TRAIL, G.lOut, 'trail');
+  edgeLeaves(g, t, LEAD, G.rIn, 'lead');
+  // loose leaves peeling off the trailing edge
+  for (const lf of LOOSE) {
+    if (t < lf.release) continue;
+    const dt = t - lf.release;
+    const x0 = edgeX(lf.release, G.lOut) + lf.dx;
+    const x = x0 + 900 * dt * (1 - Math.min(dt, 0.4));     // carried, then slowing
+    const y = lf.y + lf.vy * dt + 140 * dt * dt;
+    const a = 1 - clamp01((dt - 0.12) / 0.22);              // gone by ~0.34 s after release
+    if (a <= 0) continue;
+    drawLeaf(g, lf.sprite, x, y, lf.len, lf.rot + lf.spin * dt, lf.flip, a);
+  }
+  g.restore();
+};
+
+// Motion-blurred frame: average `samples` sub-frames over a 126° shutter,
+// accumulated in premultiplied alpha, returned as a PNG data URL.
+const acc = new Float32Array(W * H * 4);
+const out = document.createElement('canvas'); out.width = W; out.height = H;
+const octx = out.getContext('2d');
+window.renderFrame = function (t, fps, samples) {
+  t += T0;
+  acc.fill(0);
+  for (let s = 0; s < samples; s++) {
+    const ts = Math.min(TIMELINE_END, Math.max(0, t + ((s + 0.5) / samples - 0.5) * (0.35 / fps)));
+    window.draw(ts);
+    const d = ctx.getImageData(0, 0, W, H).data;
+    for (let i = 0; i < d.length; i += 4) {
+      const a = d[i + 3];
+      if (a === 0) continue;
+      acc[i] += d[i] * a; acc[i + 1] += d[i + 1] * a; acc[i + 2] += d[i + 2] * a; acc[i + 3] += a;
+    }
+  }
+  const img = octx.createImageData(W, H);
+  const o = img.data;
+  for (let i = 0; i < o.length; i += 4) {
+    const a = acc[i + 3];
+    if (a === 0) continue;
+    o[i] = acc[i] / a; o[i + 1] = acc[i + 1] / a; o[i + 2] = acc[i + 2] / a;
+    o[i + 3] = Math.round(a / samples);
+  }
+  octx.putImageData(img, 0, 0);
+  return out.toDataURL('image/png');
+};
+window.DURATION = DURATION;
+window.ready = true;
+</script>
+</body>
+</html>
