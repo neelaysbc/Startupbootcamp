@@ -1,11 +1,10 @@
 # SBC Leaf Swipe – stinger transition
 
 Left-to-right, full-height transition using the SBC leaves and official arrow.
-**AV team: see [AV_CUE_SHEET.md](AV_CUE_SHEET.md)** (cut point 600 ms, file formats, OBS / vMix / ATEM / QLab setup).
+**AV team: see [AV_CUE_SHEET.md](AV_CUE_SHEET.md)** (cut point 1300 ms, file formats, OBS / vMix / ATEM / QLab setup).
 
 - `deliverables/` – ProRes 4444 alpha, VP9 alpha WebM, fill/key MP4s, whoosh WAV and preview, at 1080p50 and 1080p60.
-- The full AV pack (the above plus PNG sequences and the cue sheet, 123 MB) is too large for git;
-  it was shared separately and can be rebuilt with the steps below.
+- PNG sequences (85–100 MB zipped) are not committed; rebuild them with the steps below.
 
 ## Source
 - `stinger.html` – the animation (`window.draw(t)` on a transparent 1920×1080 canvas). Timing,

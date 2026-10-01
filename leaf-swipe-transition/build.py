@@ -13,8 +13,8 @@ import zipfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-DUR = 1.40
-CUT = 0.60            # recommended transition point (inside the full-cover window)
+DUR = 2.64
+CUT = 1.30            # recommended transition point (inside the full-cover window)
 NAME = 'SBC_LeafSwipe_Stinger'
 
 
@@ -76,8 +76,8 @@ def main(work, out):
     fps = 60
     frames = os.path.join(work, 'frames_60', 'frame_%04d.png')
     cut_f = round(CUT * fps)
-    ff('-loop', '1', '-framerate', str(fps), '-t', '3.4', '-i', a,
-       '-loop', '1', '-framerate', str(fps), '-t', '3.4', '-i', b,
+    ff('-loop', '1', '-framerate', str(fps), '-t', str(DUR + 2), '-i', a,
+       '-loop', '1', '-framerate', str(fps), '-t', str(DUR + 2), '-i', b,
        '-framerate', str(fps), '-i', frames,
        '-i', wav,
        '-filter_complex',
@@ -85,8 +85,8 @@ def main(work, out):
        f"[0:v][1:v]blend=all_expr='if(lt(N,{60 + cut_f}),A,B)'[base];"
        f"[2:v]setpts=PTS+1.0/TB[st];"
        f"[base][st]overlay=eof_action=pass:format=auto,format=yuv420p[v];"
-       f"[3:a]adelay=1000|1000,apad=whole_dur=3.4[a]",
-       '-map', '[v]', '-map', '[a]', '-t', '3.4',
+       f"[3:a]adelay=1000|1000,apad=whole_dur={DUR + 2}[a]",
+       '-map', '[v]', '-map', '[a]', '-t', str(DUR + 2),
        '-c:v', 'libx264', '-crf', '16', '-preset', 'slow', '-c:a', 'aac', '-b:a', '256k',
        os.path.join(out, f'{NAME}_PREVIEW_A-to-B.mp4'))
     print('done ->', out)
