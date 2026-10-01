@@ -5,7 +5,7 @@ The green panel's edge positions are recomputed with the same easing as
 stinger.html, so loudness and brightness follow the edge speed and the
 stereo image pans left -> right with the swipe.
 
-Output: whoosh.wav (48 kHz, 24-bit stereo, 2.64 s, peak -6 dBFS)
+Output: whoosh.wav (48 kHz, 24-bit stereo, 3.05 s, peak -6 dBFS)
 """
 import sys
 import wave
@@ -14,11 +14,12 @@ import numpy as np
 from scipy.signal import butter, sosfilt, get_window
 
 SR = 48000
-T0, DUR = 0.26, 2.64           # must match stinger.html
+T0, DUR = 0.27, 3.05           # must match stinger.html
 T_EDGE = 1.80
 W = 1920
-X0, X1 = -320, W + 320
-R_IN, L_OUT = 0.06, 1.21       # green band
+X0, X1 = -560, W + 560
+R_IN, L_OUT = 0.00, 1.62       # card leading / trailing edge
+GROW_START, GROW_END = 0.95, 2.02   # logo leaves growing in
 rng = np.random.default_rng(11)
 
 
@@ -108,10 +109,10 @@ xin, vin = sweep(edge(R_IN))
 xout, vout = sweep(edge(L_OUT))
 mix = layer(xin, vin, 1.0) + layer(xout, vout, 0.8)
 mix += rustle(xin, vin, 420, 0.9) + rustle(xout, vout, 380, 0.75)
-# gentle low "air push" under the cover moment
-lowf = sosfilt(butter(2, [60, 180], 'bandpass', fs=SR, output='sos'), rng.standard_normal(n))
-cover_env = np.exp(-0.5 * ((t - 1.27) / 0.16) ** 2)
-mix += np.stack([lowf, lowf]) * cover_env * 0.6
+# soft rustle while the leaf arrow grows in (centred, bottom-up build)
+grow = np.clip((t - GROW_START) / (GROW_END - GROW_START), 0, 1)
+grow_rate = np.sin(np.pi * grow) * ((t > GROW_START) & (t < GROW_END))
+mix += rustle(np.full(n, W / 2), grow_rate * 4000 + 1e-6, 260, 0.45)
 
 for c in range(2):
     mix[c] = sosfilt(butter(2, 40, 'highpass', fs=SR, output='sos'), mix[c])

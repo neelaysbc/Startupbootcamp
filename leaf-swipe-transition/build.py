@@ -13,8 +13,8 @@ import zipfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-DUR = 2.64
-CUT = 1.30            # recommended transition point (inside the full-cover window)
+DUR = 3.05
+CUT = 1.40            # recommended transition point (inside the full-cover window)
 NAME = 'SBC_LeafSwipe_Stinger'
 
 
